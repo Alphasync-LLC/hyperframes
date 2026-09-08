@@ -803,6 +803,48 @@ describe("runProbeStage — render variable threading", () => {
 });
 
 describe("runProbeStage — decimal duration frame count", () => {
+  it("reproduces all 14 cumulative final-frame indices from the field report", async () => {
+    const { runProbeStage } = await import("./probeStage.js");
+    const segmentFrameCounts = [
+      484, 728, 551, 633, 477, 257, 383, 305, 446, 640, 414, 511, 904, 3028,
+    ];
+    const expectedTailFrames = [
+      483, 1211, 1762, 2395, 2872, 3129, 3512, 3817, 4263, 4903, 5317, 5828, 6732, 9760,
+    ];
+    let cumulativeFrames = 0;
+    const actualTailFrames: number[] = [];
+
+    for (const frameCount of segmentFrameCounts) {
+      const input = makeProbeInput({});
+      input.job.config.fps = { num: 30, den: 1 };
+      const duration = (frameCount - 0.01) / 30;
+      input.composition.duration = duration;
+      input.compiled.staticDuration = duration;
+
+      const result = await runProbeStage(input);
+
+      expect(result.totalFrames).toBe(frameCount);
+      cumulativeFrames += result.totalFrames;
+      actualTailFrames.push(cumulativeFrames - 1);
+    }
+
+    expect(actualTailFrames).toEqual(expectedTailFrames);
+    expect(cumulativeFrames).toBe(9761);
+  });
+
+  it("covers the final 60fps sample when duration extends fractionally past it", async () => {
+    const { runProbeStage } = await import("./probeStage.js");
+    const input = makeProbeInput({});
+    input.job.config.fps = { num: 60, den: 1 };
+    input.composition.duration = 79.402;
+    input.compiled.staticDuration = 79.402;
+
+    const result = await runProbeStage(input);
+
+    expect(result.totalFrames).toBe(4765);
+    expect((result.totalFrames - 1) / 60).toBeLessThan(result.duration);
+  });
+
   it("does not add a frame for a six-decimal duration rounded from an exact frame boundary", async () => {
     const { runProbeStage } = await import("./probeStage.js");
     const input = makeProbeInput({});

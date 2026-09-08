@@ -631,6 +631,114 @@ describe("initSandboxRuntimeModular", () => {
     expect(video.style.visibility).toBe("visible");
   });
 
+  it("keeps the producer's final sample visible through a fractional authored end", () => {
+    const root = document.createElement("div");
+    root.setAttribute("data-composition-id", "main");
+    root.setAttribute("data-root", "true");
+    root.setAttribute("data-start", "0");
+    root.setAttribute("data-width", "1080");
+    root.setAttribute("data-height", "1920");
+    document.body.appendChild(root);
+
+    const ctaHost = document.createElement("div");
+    ctaHost.setAttribute("data-start", "0");
+    root.appendChild(ctaHost);
+
+    const cta = document.createElement("div");
+    cta.setAttribute("data-start", "0");
+    ctaHost.appendChild(cta);
+
+    const setDuration = (duration: number) => {
+      for (const element of [root, ctaHost, cta]) {
+        element.setAttribute("data-duration", String(duration));
+      }
+    };
+    setDuration(79.402);
+
+    window.__timelines = { main: createMockTimeline(79.402) };
+    window.__HF_EXPORT_RENDER_SEEK_CONFIG = { fps: 60, fpsSource: "render-options" };
+    initSandboxRuntimeModular();
+
+    const finalSample = 4764 / 60;
+    window.__player?.renderSeek(finalSample);
+    expect([root, ctaHost, cta].map((element) => element.style.visibility)).toEqual([
+      "visible",
+      "visible",
+      "visible",
+    ]);
+
+    setDuration(79.4);
+    window.__player?.renderSeek(finalSample);
+    expect([root, ctaHost, cta].map((element) => element.style.visibility)).toEqual([
+      "hidden",
+      "hidden",
+      "hidden",
+    ]);
+
+    setDuration(79.41666666666667);
+    window.__player?.renderSeek(finalSample);
+    expect([root, ctaHost, cta].map((element) => element.style.visibility)).toEqual([
+      "visible",
+      "visible",
+      "visible",
+    ]);
+  });
+
+  it("keeps all 14 reported nested cumulative tail samples paintable", () => {
+    const segmentFrameCounts = [
+      484, 728, 551, 633, 477, 257, 383, 305, 446, 640, 414, 511, 904, 3028,
+    ];
+    const reportedTailFrames = [
+      483, 1211, 1762, 2395, 2872, 3129, 3512, 3817, 4263, 4903, 5317, 5828, 6732, 9760,
+    ];
+    const fps = 30;
+    const fractionalFrameRemainder = 0.99;
+    const root = document.createElement("div");
+    root.setAttribute("data-composition-id", "main");
+    root.setAttribute("data-root", "true");
+    root.setAttribute("data-start", "0");
+    root.setAttribute("data-duration", String((9760 + fractionalFrameRemainder) / fps));
+    root.setAttribute("data-width", "1920");
+    root.setAttribute("data-height", "1080");
+    document.body.appendChild(root);
+
+    let startFrame = 0;
+    const seams = segmentFrameCounts.map((frameCount, index) => {
+      const host = document.createElement("section");
+      host.setAttribute("data-start", String(startFrame / fps));
+      host.setAttribute("data-duration", String((frameCount - 1 + fractionalFrameRemainder) / fps));
+      const child = document.createElement("span");
+      child.setAttribute("data-start", String(startFrame / fps));
+      child.setAttribute(
+        "data-duration",
+        String((frameCount - 1 + fractionalFrameRemainder) / fps),
+      );
+      host.appendChild(child);
+      root.appendChild(host);
+      const tailFrame = startFrame + frameCount - 1;
+      expect(tailFrame).toBe(reportedTailFrames[index]);
+      startFrame += frameCount;
+      return { host, child, tailFrame };
+    });
+    expect(startFrame).toBe(9761);
+
+    window.__timelines = { main: createMockTimeline(9761 / fps) };
+    window.__HF_EXPORT_RENDER_SEEK_CONFIG = { fps, fpsSource: "render-options" };
+    initSandboxRuntimeModular();
+
+    // Screenshot and drawElement both call the engine's shared
+    // prepareFrameForCapture -> window.__hf.seek path before reading pixels.
+    // Lock the visibility state at that common pre-capture boundary; the
+    // unavailable private project is still required for buffer/encode proof.
+    for (const { host, child, tailFrame } of seams) {
+      window.__player?.renderSeek(tailFrame / fps);
+      expect([host.style.visibility, child.style.visibility]).toEqual(["visible", "visible"]);
+
+      window.__player?.renderSeek((tailFrame + 1) / fps);
+      expect([host.style.visibility, child.style.visibility]).toEqual(["hidden", "hidden"]);
+    }
+  });
+
   it("surfaces unknown export render fps sources without collapsing them to render-options", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const root = document.createElement("div");
